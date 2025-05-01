@@ -97,3 +97,56 @@ func main() {
 	fmt.Printf("QPS: %.0f 次/秒\n", float64(totalReads)/duration.Seconds())
 	fmt.Printf("错误次数: %d\n", errorCount)
 }
+
+// package main
+
+// import (
+// 	"fmt"
+// 	"log"
+// 	"math"
+// 	"time"
+
+// 	"github.com/goburrow/modbus"
+// )
+
+// func main() {
+// 	// Modbus TCP connection parameters
+// 	handler := modbus.NewTCPClientHandler("192.168.1.88:502")
+// 	handler.Timeout = 1 * time.Second
+// 	handler.SlaveId = 1
+
+// 	// Connect to the PLC
+// 	err := handler.Connect()
+// 	if err != nil {
+// 		log.Fatalf("Failed to connect to PLC: %v", err)
+// 	}
+// 	defer handler.Close()
+
+// 	client := modbus.NewClient(handler)
+
+// 	// Read holding registers (example: read 10 registers starting from address 0)
+// 	address := uint16(0)
+// 	quantity := uint16(125)
+
+// 	const Count = 100000000 // Number of times to read the registers
+
+// 	init_time := time.Now().UnixNano()
+// 	res := make([][]uint8, 0)
+// 	for range Count {
+// 		// Read the holding registers from the PLC
+// 		results, err := client.ReadHoldingRegisters(address, quantity)
+// 		if err != nil {
+// 			log.Fatalf("Failed to read holding registers: %v", err)
+// 		}
+// 		// Print the results
+// 		fmt.Printf("Data from PLC:%v %v\n", time.Now().UnixNano(), results)
+// 		res = append(res, results)
+// 	}
+
+// 	end_time := time.Now().UnixNano()
+// 	diff_time := end_time - init_time
+
+// 	fmt.Printf("共耗时: %v秒\n", math.Round(float64(diff_time))/1e9)
+// 	fmt.Printf("共连接次数: %v\n", len(res))
+// 	fmt.Printf("平均每次耗时: %v微秒\n", math.Round(float64(diff_time)/float64(Count)/1000))
+// }
