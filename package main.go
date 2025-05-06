@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"sync"
@@ -9,18 +10,24 @@ import (
 	"github.com/goburrow/modbus"
 )
 
-func readRegisters(client modbus.Client, address, quantity uint16, resChan chan []uint8, errorCount *int) {
+func readRegisters(client modbus.Client, address, quantity uint16, resChan chan []int16, errorCount *int) {
 	results, err := client.ReadHoldingRegisters(address, quantity)
 	if err != nil {
 		log.Printf("Failed to read holding registers: %v", err)
 		*errorCount++
 		return
 	}
-	fmt.Printf("读取到数据:%v %v\n", time.Now().UnixNano(), results)
-	resChan <- results
+	// Convert byte slice to int16 slice
+	int16Results := make([]int16, len(results)/2)
+	for i := range int16Results {
+		rawValue := binary.BigEndian.Uint16(results[i*2:])
+		int16Results[i] = int16(rawValue)
+	}
+	fmt.Printf("读取到数据:%v %v\n", time.Now().UnixNano(), int16Results)
+	resChan <- int16Results
 }
 
-func worker(client modbus.Client, address, quantity uint16, jobs <-chan struct{}, resChan chan []uint8, wg *sync.WaitGroup, errorCount *int) {
+func worker(client modbus.Client, address, quantity uint16, jobs <-chan struct{}, resChan chan []int16, wg *sync.WaitGroup, errorCount *int) {
 	defer wg.Done()
 	for range jobs {
 		readRegisters(client, address, quantity, resChan, errorCount)
@@ -46,13 +53,14 @@ func main() {
 	address := uint16(0)
 	quantity := uint16(125)
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_000_000 // 总读取次数
-	workerCount := 30       // goroutine线程个数
-	errorCount := 0         // 错误计数
+	totalReads := 10_000 // 总读取次数
+	workerCount := 30    // goroutine线程个数
+	errorCount := 0      // 错误计数
 
 	// 准备结果收集
-	resChan := make(chan []uint8, 1000) // 缓冲区防止阻塞
-	results := make([][]uint8, 0, totalReads)
+	resChanCount := 1000
+	resChan := make(chan []int16, resChanCount) // 缓冲区防止阻塞
+	results := make([][]int16, 0, totalReads)
 	done := make(chan struct{})
 
 	// 启动结果收集器
