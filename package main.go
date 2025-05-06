@@ -1,13 +1,14 @@
 package main
 
 import (
+	"connectPlcModbus/logger"
 	"encoding/binary"
-	"fmt"
-	"log"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/goburrow/modbus"
+	"go.uber.org/zap"
 )
 
 // 连接池结构体
@@ -19,7 +20,7 @@ func NewClientPool(size int, handler *modbus.TCPClientHandler) *ClientPool {
 	p := make(chan modbus.Client, size)
 	for i := 0; i < size; i++ {
 		if err := handler.Connect(); err != nil {
-			log.Fatalf("创建连接失败: %v", err)
+			logger.Logger.Error("创建连接失败", zap.Error(err))
 		}
 		p <- modbus.NewClient(handler)
 	}
@@ -41,7 +42,7 @@ func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, re
 	for range jobs {
 		results, err := client.ReadHoldingRegisters(address, quantity)
 		if err != nil {
-			log.Printf("Failed to read holding registers: %v", err)
+			logger.Logger.Error("读取寄存器失败", zap.Error(err))
 			*errorCount++
 			continue
 		}
@@ -51,12 +52,17 @@ func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, re
 			rawValue := binary.BigEndian.Uint16(results[i*2:])
 			int16Results[i] = int16(rawValue)
 		}
-		fmt.Printf("读取到数据:%v %v\n", time.Now().UnixNano(), int16Results)
+		logger.Logger.Debug("读取到数据", zap.Int64("时间戳", time.Now().UnixNano()), zap.Any("数据", int16Results))
 		resChan <- int16Results
 	}
 }
 
 func main() {
+	// 初始化日志
+	logger.InitLogger()
+	defer logger.Sync()
+	logger.Logger.Debug("应用启动")
+
 	// Modbus TCP 连接参数
 	handler := modbus.NewTCPClientHandler("192.168.1.88:502")
 	handler.Timeout = 1 * time.Second
@@ -79,9 +85,9 @@ func main() {
 	address := uint16(0)    // 寄存器起始地址
 	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_000_000 // 总读取次数
-	workerCount := 10       // 客户端个数
-	errorCount := 0         // 错误计数
+	totalReads := 1_000 // 总读取次数
+	workerCount := 10   // 客户端个数
+	errorCount := 0     // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -124,12 +130,14 @@ func main() {
 	// 计算耗时
 	duration := time.Since(startTime)
 
-	fmt.Printf("总共完成读取: %d 次\n", len(results))
-	fmt.Printf("总耗时: %.2f 秒\n", duration.Seconds())
-	fmt.Printf("总耗时: %.2f 分\n", float64(duration.Minutes()))
-	fmt.Printf("平均每次耗时: %.2f 微秒\n", float64(duration.Microseconds())/float64(totalReads))
-	fmt.Printf("QPS: %.0f 次/秒\n", float64(totalReads)/duration.Seconds())
-	fmt.Printf("错误次数: %d\n", errorCount)
+	logger.Logger.Info("性能统计",
+		zap.Int("完成读取次数", len(results)),
+		zap.Float64("总耗时(秒)", math.Round(duration.Seconds()*100/100)),
+		zap.Float64("总耗时(分)", math.Round(duration.Minutes()*100/100)),
+		zap.Float64("平均每次耗时(微秒)", math.Round(float64(duration.Microseconds())/float64(totalReads)*100/100)),
+		zap.Float64("QPS(次/秒)", math.Round(float64(totalReads)/duration.Seconds()*100/100)),
+		zap.Int("错误次数", errorCount),
+	)
 }
 
 // package main
