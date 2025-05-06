@@ -10,27 +10,49 @@ import (
 	"github.com/goburrow/modbus"
 )
 
-func readRegisters(client modbus.Client, address, quantity uint16, resChan chan []int16, errorCount *int) {
-	results, err := client.ReadHoldingRegisters(address, quantity)
-	if err != nil {
-		log.Printf("Failed to read holding registers: %v", err)
-		*errorCount++
-		return
-	}
-	// Convert byte slice to int16 slice
-	int16Results := make([]int16, len(results)/2)
-	for i := range int16Results {
-		rawValue := binary.BigEndian.Uint16(results[i*2:])
-		int16Results[i] = int16(rawValue)
-	}
-	fmt.Printf("读取到数据:%v %v\n", time.Now().UnixNano(), int16Results)
-	resChan <- int16Results
+// 连接池结构体
+type ClientPool struct {
+	pool chan modbus.Client
 }
 
-func worker(client modbus.Client, address, quantity uint16, jobs <-chan struct{}, resChan chan []int16, wg *sync.WaitGroup, errorCount *int) {
+func NewClientPool(size int, handler *modbus.TCPClientHandler) *ClientPool {
+	p := make(chan modbus.Client, size)
+	for i := 0; i < size; i++ {
+		if err := handler.Connect(); err != nil {
+			log.Fatalf("创建连接失败: %v", err)
+		}
+		p <- modbus.NewClient(handler)
+	}
+	return &ClientPool{pool: p}
+}
+
+func (p *ClientPool) Get() modbus.Client {
+	return <-p.pool
+}
+
+func (p *ClientPool) Put(client modbus.Client) {
+	p.pool <- client
+}
+
+func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, resChan chan []int16, wg *sync.WaitGroup, errorCount *int) {
 	defer wg.Done()
+	client := pool.Get()
+	defer pool.Put(client) // 确保连接归还到池中
 	for range jobs {
-		readRegisters(client, address, quantity, resChan, errorCount)
+		results, err := client.ReadHoldingRegisters(address, quantity)
+		if err != nil {
+			log.Printf("Failed to read holding registers: %v", err)
+			*errorCount++
+			continue
+		}
+		// Convert byte slice to int16 slice
+		int16Results := make([]int16, len(results)/2)
+		for i := range int16Results {
+			rawValue := binary.BigEndian.Uint16(results[i*2:])
+			int16Results[i] = int16(rawValue)
+		}
+		fmt.Printf("读取到数据:%v %v\n", time.Now().UnixNano(), int16Results)
+		resChan <- int16Results
 	}
 }
 
@@ -40,22 +62,26 @@ func main() {
 	handler.Timeout = 1 * time.Second
 	handler.SlaveId = 1
 
-	// 连接到 PLC
-	err := handler.Connect()
-	if err != nil {
-		log.Fatalf("Failed to connect to PLC: %v", err)
-	}
-	defer handler.Close()
-
-	client := modbus.NewClient(handler)
+	// 创建连接池
+	poolSize := 20 // 连接池大小
+	clientPool := NewClientPool(poolSize, handler)
+	defer func() {
+		// 确保所有连接关闭
+		close(clientPool.pool)
+		for client := range clientPool.pool {
+			if c, ok := client.(interface{ Close() error }); ok {
+				c.Close()
+			}
+		}
+	}()
 
 	// 读取参数
-	address := uint16(0)
-	quantity := uint16(125)
+	address := uint16(0)    // 寄存器起始地址
+	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 10_000 // 总读取次数
-	workerCount := 30    // goroutine线程个数
-	errorCount := 0      // 错误计数
+	totalReads := 1_000_000 // 总读取次数
+	workerCount := 10       // 客户端个数
+	errorCount := 0         // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -85,7 +111,7 @@ func main() {
 	var wg sync.WaitGroup
 	for range workerCount {
 		wg.Add(1)
-		go worker(client, address, quantity, jobs, resChan, &wg, &errorCount)
+		go worker(clientPool, address, quantity, jobs, resChan, &wg, &errorCount)
 	}
 
 	// 等待所有worker完成
