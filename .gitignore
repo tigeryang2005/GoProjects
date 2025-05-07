@@ -26,6 +26,7 @@ go.work
 
 # Logs
 *.log
+Logs/
 
 # OS generated files
 .DS_Store
