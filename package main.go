@@ -75,7 +75,7 @@ func main() {
 	url := "http://localhost:8086"
 	token := "Ab5E0h9ReK8RhJ_YsdgQc3RDT2oldnJT-HgNmta3QAGkckeS_NXkAPymJ-sGBosxQ4MkEJn3eL0ckfzzsUB8eQ=="
 	org := "my-org"
-	bucket := "my_bucket"
+	bucket := "my-bucket"
 	influxdb2Client := influxdb2.NewClient(url, token)
 	// 获取异步写入API
 	writeAPI := influxdb2Client.WriteAPI(org, bucket)
@@ -103,9 +103,9 @@ func main() {
 	address := uint16(0)    // 寄存器起始地址
 	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_000 // 总读取次数
-	workerCount := 10   // 客户端个数
-	errorCount := 0     // 错误计数
+	totalReads := 1_000_000 // 总读取次数
+	workerCount := 30       // 客户端个数
+	errorCount := 0         // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -124,7 +124,7 @@ func main() {
 				for _, v := range value {
 					if v != int16(0) {
 						count++
-						p := influxdb2.NewPointWithMeasurement("temperature").
+						p := influxdb2.NewPointWithMeasurement("experiment").
 							// AddTag("location", "room1").
 							AddTag("sensor", fmt.Sprintf("count%d", count)).
 							AddField("value", v).
