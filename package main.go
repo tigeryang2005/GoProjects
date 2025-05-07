@@ -87,7 +87,7 @@ func main() {
 	handler.SlaveId = 1
 
 	// 创建连接池
-	poolSize := 20 // 连接池大小
+	poolSize := 10 // 连接池大小
 	clientPool := NewClientPool(poolSize, handler)
 	defer func() {
 		// 确保所有连接关闭
@@ -104,7 +104,7 @@ func main() {
 	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
 	totalReads := 1_000_000 // 总读取次数
-	workerCount := 30       // 客户端个数
+	workerCount := 10       // 客户端个数
 	errorCount := 0         // 错误计数
 
 	// 准备结果收集
