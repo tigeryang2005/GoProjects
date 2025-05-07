@@ -3,11 +3,14 @@ package main
 import (
 	"connectPlcModbus/logger"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/goburrow/modbus"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +38,7 @@ func (p *ClientPool) Put(client modbus.Client) {
 	p.pool <- client
 }
 
-func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, resChan chan []int16, wg *sync.WaitGroup, errorCount *int) {
+func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, resChan chan map[time.Time][]int16, wg *sync.WaitGroup, errorCount *int) {
 	defer wg.Done()
 	client := pool.Get()
 	defer pool.Put(client) // 确保连接归还到池中
@@ -46,14 +49,18 @@ func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, re
 			*errorCount++
 			continue
 		}
+		readRegistersTs := time.Now()
 		// Convert byte slice to int16 slice
 		int16Results := make([]int16, len(results)/2)
 		for i := range int16Results {
 			rawValue := binary.BigEndian.Uint16(results[i*2:])
 			int16Results[i] = int16(rawValue)
 		}
-		logger.Logger.Debug("读取到数据", zap.Int64("时间戳", time.Now().UnixNano()), zap.Any("数据", int16Results))
-		resChan <- int16Results
+		resultsMap := make(map[time.Time][]int16)
+		resultsMap[readRegistersTs] = int16Results
+		// 记录读取到的数据
+		// logger.Logger.Debug("读取到数据", zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("数据", int16Results))
+		resChan <- resultsMap
 	}
 }
 
@@ -62,6 +69,17 @@ func main() {
 	logger.InitLogger()
 	defer logger.Sync()
 	logger.Logger.Debug("应用启动")
+
+	//连接influxdb
+	// 1. 创建InfluxDB客户端
+	url := "http://localhost:8086"
+	token := "Ab5E0h9ReK8RhJ_YsdgQc3RDT2oldnJT-HgNmta3QAGkckeS_NXkAPymJ-sGBosxQ4MkEJn3eL0ckfzzsUB8eQ=="
+	org := "my-org"
+	bucket := "my_bucket"
+	influxdb2Client := influxdb2.NewClient(url, token)
+	// 获取异步写入API
+	writeAPI := influxdb2Client.WriteAPI(org, bucket)
+	defer influxdb2Client.Close()
 
 	// Modbus TCP 连接参数
 	handler := modbus.NewTCPClientHandler("192.168.1.88:502")
@@ -91,17 +109,45 @@ func main() {
 
 	// 准备结果收集
 	resChanCount := 1000
-	resChan := make(chan []int16, resChanCount) // 缓冲区防止阻塞
-	results := make([][]int16, 0, totalReads)
+	resChan := make(chan map[time.Time][]int16, resChanCount) // 缓冲区防止阻塞
+	results := make([]map[time.Time][]int16, 0, totalReads)
 	done := make(chan struct{})
 
 	// 启动结果收集器
-	go func() {
+	go func(writeAPI api.WriteAPI) {
+		defer close(done)
 		for res := range resChan {
 			results = append(results, res)
+			// 创建point
+			count := 0
+			for key, value := range res {
+				for _, v := range value {
+					if v != int16(0) {
+						count++
+						p := influxdb2.NewPointWithMeasurement("temperature").
+							// AddTag("location", "room1").
+							AddTag("sensor", fmt.Sprintf("count%d", count)).
+							AddField("value", v).
+							SetTime(time.Unix(0, key.UnixNano()))
+						// 写入数据到InfluxDB
+						logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("传感器名称：", fmt.Sprintf("count%d", count)), zap.Any("值：", v))
+						writeAPI.WritePoint(p)
+					}
+				}
+			}
 		}
-		close(done)
-	}()
+
+		// 错误处理
+		errorsCh := writeAPI.Errors()
+		go func() {
+			for err := range errorsCh {
+				logger.Logger.Error("写入错误:", zap.Error(err))
+			}
+		}()
+
+		// 确保所有数据都已写入
+		writeAPI.Flush()
+	}(writeAPI)
 
 	// 创建工作队列
 	jobs := make(chan struct{}, totalReads)
