@@ -59,7 +59,7 @@ func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, re
 		resultsMap := make(map[time.Time][]int16)
 		resultsMap[readRegistersTs] = int16Results
 		// 记录读取到的数据
-		logger.Logger.Debug("读取到数据", zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("数据", int16Results))
+		// logger.Logger.Debug("读取到数据", zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("数据", int16Results))
 		resChan <- resultsMap
 	}
 }
@@ -116,6 +116,7 @@ func main() {
 	// 启动结果收集器
 	go func(writeAPI api.WriteAPI) {
 		defer close(done)
+		num := 0
 		for res := range resChan {
 			results = append(results, res)
 			for key, value := range res {
@@ -124,9 +125,11 @@ func main() {
 				for count, v := range value {
 					p.AddField(fmt.Sprintf("sensor%d", count), v)
 				}
+				num++
+				p.AddField("num", num)
 				// 写入数据到InfluxDB
 				p.SetTime(time.Unix(0, key.UnixNano()))
-				logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("值：", value))
+				logger.Logger.Info("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", num), zap.Any("值：", value))
 				writeAPI.WritePoint(p)
 				writeAPI.Flush()
 			}
