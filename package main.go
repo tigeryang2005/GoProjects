@@ -77,9 +77,9 @@ func main() {
 	org := "my-org"
 	bucket := "my-bucket"
 	influxdb2Client := influxdb2.NewClient(url, token)
+	defer influxdb2Client.Close()
 	// 获取异步写入API
 	writeAPI := influxdb2Client.WriteAPI(org, bucket)
-	defer influxdb2Client.Close()
 
 	// Modbus TCP 连接参数
 	handler := modbus.NewTCPClientHandler("192.168.1.88:502")
@@ -87,7 +87,7 @@ func main() {
 	handler.SlaveId = 1
 
 	// 创建连接池
-	poolSize := 10 // 连接池大小
+	poolSize := 20 // 连接池大小
 	clientPool := NewClientPool(poolSize, handler)
 	defer func() {
 		// 确保所有连接关闭
@@ -103,9 +103,9 @@ func main() {
 	address := uint16(0)    // 寄存器起始地址
 	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_000_000 // 总读取次数
-	workerCount := 10       // 客户端个数
-	errorCount := 0         // 错误计数
+	totalReads := 1_00_000 // 总读取次数
+	workerCount := 30      // 客户端个数
+	errorCount := 0        // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -118,23 +118,19 @@ func main() {
 		defer close(done)
 		for res := range resChan {
 			results = append(results, res)
-			// 创建point
-			count := 0
 			for key, value := range res {
-				for _, v := range value {
-					if v != int16(0) {
-						count++
-						p := influxdb2.NewPointWithMeasurement("experiment").
-							// AddTag("location", "room1").
-							AddTag("sensor", fmt.Sprintf("count%d", count)).
-							AddField("value", v).
-							SetTime(time.Unix(0, key.UnixNano()))
-						// 写入数据到InfluxDB
-						logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("传感器名称：", fmt.Sprintf("count%d", count)), zap.Any("值：", v))
-						writeAPI.WritePoint(p)
-					}
+				// 创建point
+				p := influxdb2.NewPointWithMeasurement("experiment").AddTag("location", "tianjin")
+				for count, v := range value {
+					p.AddField(fmt.Sprintf("sensor%d", count), v)
 				}
+				// 写入数据到InfluxDB
+				p.SetTime(time.Unix(0, key.UnixNano()))
+				logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("值：", value))
+				writeAPI.WritePoint(p)
+				writeAPI.Flush()
 			}
+			// logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("值：", value))
 		}
 
 		// 错误处理
