@@ -14,36 +14,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// 连接池结构体
-type ClientPool struct {
-	pool chan modbus.Client
-}
-
-func NewClientPool(size int, handler *modbus.TCPClientHandler) *ClientPool {
-	p := make(chan modbus.Client, size)
-	for i := 0; i < size; i++ {
-		if err := handler.Connect(); err != nil {
-			logger.Logger.Error("创建连接失败", zap.Error(err))
-		}
-		p <- modbus.NewClient(handler)
-	}
-	return &ClientPool{pool: p}
-}
-
-func (p *ClientPool) Get() modbus.Client {
-	return <-p.pool
-}
-
-func (p *ClientPool) Put(client modbus.Client) {
-	p.pool <- client
-}
-
-func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, resChan chan map[time.Time][]int16, wg *sync.WaitGroup, errorCount *int) {
+func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan struct{}, resChan chan map[time.Time][]int16, wg *sync.WaitGroup, errorCount *int) {
 	defer wg.Done()
-	client := pool.Get()
-	defer pool.Put(client) // 确保连接归还到池中
+
 	for range jobs {
-		results, err := client.ReadHoldingRegisters(address, quantity)
+		results, err := modbusClient.ReadHoldingRegisters(address, quantity)
 		if err != nil {
 			logger.Logger.Error("读取寄存器失败", zap.Error(err))
 			*errorCount++
@@ -81,31 +56,26 @@ func main() {
 	// 获取异步写入API
 	writeAPI := influxdb2Client.WriteAPI(org, bucket)
 
-	// Modbus TCP 连接参数
-	handler := modbus.NewTCPClientHandler("192.168.1.88:502")
-	handler.Timeout = 1 * time.Second
-	handler.SlaveId = 1
-
-	// 创建连接池
-	poolSize := 20 // 连接池大小
-	clientPool := NewClientPool(poolSize, handler)
-	defer func() {
-		// 确保所有连接关闭
-		close(clientPool.pool)
-		for client := range clientPool.pool {
-			if c, ok := client.(interface{ Close() error }); ok {
-				c.Close()
-			}
+	modbusClientSize := 10 // 客户端handler数量与worker数量一致
+	modbusClients := make([]modbus.Client, 0, modbusClientSize)
+	for range modbusClientSize {
+		// Modbus TCP 连接参数
+		handler := modbus.NewTCPClientHandler("192.168.1.88:502")
+		handler.Timeout = 1 * time.Second
+		handler.SlaveId = 1
+		if err := handler.Connect(); err != nil {
+			logger.Logger.Error("创建连接失败", zap.Error(err))
 		}
-	}()
+		modbusClient := modbus.NewClient(handler)
+		modbusClients = append(modbusClients, modbusClient)
+	}
 
 	// 读取参数
 	address := uint16(0)    // 寄存器起始地址
 	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_0_000 // 总读取次数
-	workerCount := 30     // 客户端个数
-	errorCount := 0       // 错误计数
+	totalReads := 1_000_000 // 总读取次数
+	errorCount := 0         // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -131,10 +101,10 @@ func main() {
 				p.SetTime(time.Unix(0, key.UnixNano()))
 				logger.Logger.Info("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", num), zap.Any("值：", value))
 				writeAPI.WritePoint(p)
-				writeAPI.Flush()
 			}
 		}
-
+		// 确保所有数据都已写入
+		writeAPI.Flush()
 		// 错误处理
 		errorsCh := writeAPI.Errors()
 		go func() {
@@ -142,9 +112,6 @@ func main() {
 				logger.Logger.Error("写入错误:", zap.Error(err))
 			}
 		}()
-
-		// 确保所有数据都已写入
-		writeAPI.Flush()
 	}(writeAPI)
 
 	// 创建工作队列
@@ -159,9 +126,9 @@ func main() {
 
 	// 启动worker
 	var wg sync.WaitGroup
-	for range workerCount {
+	for _, modbusClient := range modbusClients {
 		wg.Add(1)
-		go worker(clientPool, address, quantity, jobs, resChan, &wg, &errorCount)
+		go worker(modbusClient, address, quantity, jobs, resChan, &wg, &errorCount)
 	}
 
 	// 等待所有worker完成
@@ -183,56 +150,3 @@ func main() {
 		zap.Int("错误次数", errorCount),
 	)
 }
-
-// package main
-
-// import (
-// 	"fmt"
-// 	"log"
-// 	"math"
-// 	"time"
-
-// 	"github.com/goburrow/modbus"
-// )
-
-// func main() {
-// 	// Modbus TCP connection parameters
-// 	handler := modbus.NewTCPClientHandler("192.168.1.88:502")
-// 	handler.Timeout = 1 * time.Second
-// 	handler.SlaveId = 1
-
-// 	// Connect to the PLC
-// 	err := handler.Connect()
-// 	if err != nil {
-// 		log.Fatalf("Failed to connect to PLC: %v", err)
-// 	}
-// 	defer handler.Close()
-
-// 	client := modbus.NewClient(handler)
-
-// 	// Read holding registers (example: read 10 registers starting from address 0)
-// 	address := uint16(0)
-// 	quantity := uint16(125)
-
-// 	const Count = 100000000 // Number of times to read the registers
-
-// 	init_time := time.Now().UnixNano()
-// 	res := make([][]uint8, 0)
-// 	for range Count {
-// 		// Read the holding registers from the PLC
-// 		results, err := client.ReadHoldingRegisters(address, quantity)
-// 		if err != nil {
-// 			log.Fatalf("Failed to read holding registers: %v", err)
-// 		}
-// 		// Print the results
-// 		fmt.Printf("Data from PLC:%v %v\n", time.Now().UnixNano(), results)
-// 		res = append(res, results)
-// 	}
-
-// 	end_time := time.Now().UnixNano()
-// 	diff_time := end_time - init_time
-
-// 	fmt.Printf("共耗时: %v秒\n", math.Round(float64(diff_time))/1e9)
-// 	fmt.Printf("共连接次数: %v\n", len(res))
-// 	fmt.Printf("平均每次耗时: %v微秒\n", math.Round(float64(diff_time)/float64(Count)/1000))
-// }
