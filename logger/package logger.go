@@ -22,7 +22,7 @@ func InitLogger() {
 	// 日志轮转配置
 	infoWriter := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   "logs/info.log",
-		MaxSize:    200, // MB
+		MaxSize:    1024, // MB
 		MaxBackups: 10,
 		MaxAge:     365, // days
 		Compress:   true,
@@ -30,7 +30,7 @@ func InitLogger() {
 
 	debugWriter := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   "logs/debug.log",
-		MaxSize:    200, // MB
+		MaxSize:    1024, // MB
 		MaxBackups: 10,
 		MaxAge:     365, // days
 		Compress:   true,
@@ -38,7 +38,7 @@ func InitLogger() {
 
 	errorWriter := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   "logs/error.log",
-		MaxSize:    200,
+		MaxSize:    1024,
 		MaxBackups: 10,
 		MaxAge:     365,
 		Compress:   true,

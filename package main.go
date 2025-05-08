@@ -59,7 +59,7 @@ func worker(pool *ClientPool, address, quantity uint16, jobs <-chan struct{}, re
 		resultsMap := make(map[time.Time][]int16)
 		resultsMap[readRegistersTs] = int16Results
 		// 记录读取到的数据
-		// logger.Logger.Debug("读取到数据", zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("数据", int16Results))
+		logger.Logger.Debug("读取到数据", zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("数据", int16Results))
 		resChan <- resultsMap
 	}
 }
@@ -103,9 +103,9 @@ func main() {
 	address := uint16(0)    // 寄存器起始地址
 	quantity := uint16(125) // 读取数量
 	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_00_000 // 总读取次数
-	workerCount := 30      // 客户端个数
-	errorCount := 0        // 错误计数
+	totalReads := 1_0_000 // 总读取次数
+	workerCount := 30     // 客户端个数
+	errorCount := 0       // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -130,7 +130,6 @@ func main() {
 				writeAPI.WritePoint(p)
 				writeAPI.Flush()
 			}
-			// logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("值：", value))
 		}
 
 		// 错误处理
