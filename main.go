@@ -6,11 +6,10 @@ import (
 )
 
 func main() {
-	// 初始化日志
+	// 初始化日志g
 	logger.InitLogger()
 	defer logger.Sync()
 	logger.Logger.Debug("应用启动")
-
 	inovanceModbus.ConnectInovanceModbus()
 
 }
