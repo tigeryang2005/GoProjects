@@ -1,43 +1,9 @@
 package main
 
 import (
+	"connectPlcModbus/inovanceModbus"
 	"connectPlcModbus/logger"
-	"encoding/binary"
-	"fmt"
-	"math"
-	"sync"
-	"time"
-
-	"github.com/goburrow/modbus"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"github.com/influxdata/influxdb-client-go/v2/api"
-	"go.uber.org/zap"
 )
-
-func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan struct{}, resChan chan map[time.Time][]int16, wg *sync.WaitGroup, errorCount *int) {
-	defer wg.Done()
-
-	for range jobs {
-		results, err := modbusClient.ReadHoldingRegisters(address, quantity)
-		if err != nil {
-			logger.Logger.Error("读取寄存器失败", zap.Error(err))
-			*errorCount++
-			continue
-		}
-		readRegistersTs := time.Now()
-		// Convert byte slice to int16 slice
-		int16Results := make([]int16, len(results)/2)
-		for i := range int16Results {
-			rawValue := binary.BigEndian.Uint16(results[i*2:])
-			int16Results[i] = int16(rawValue)
-		}
-		resultsMap := make(map[time.Time][]int16)
-		resultsMap[readRegistersTs] = int16Results
-		// 记录读取到的数据
-		// logger.Logger.Debug("读取到数据", zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("数据", int16Results))
-		resChan <- resultsMap
-	}
-}
 
 func main() {
 	// 初始化日志
@@ -45,109 +11,6 @@ func main() {
 	defer logger.Sync()
 	logger.Logger.Debug("应用启动")
 
-	//连接influxdb
-	// 1. 创建InfluxDB客户端
-	url := "http://localhost:8086"
-	token := "Q52Nrc8xXl1gWdYfHYmUkmdxLft0FnXR7gxuUKxMjC8YBo6ra8m1G1ff3EFufC42lMea6qI4eDmqovlEc7-XUA=="
-	org := "my-org"
-	bucket := "my-bucket"
-	influxdb2Client := influxdb2.NewClient(url, token)
-	defer influxdb2Client.Close()
-	// 获取异步写入API
-	writeAPI := influxdb2Client.WriteAPI(org, bucket)
+	inovanceModbus.ConnectInovanceModbus()
 
-	modbusClientSize := 1 // 客户端handler数量与worker数量一致
-	modbusClients := make([]modbus.Client, 0, modbusClientSize)
-	for range modbusClientSize {
-		// Modbus TCP 连接参数
-		handler := modbus.NewTCPClientHandler("192.168.1.88:502")
-		handler.Timeout = 1 * time.Second
-		handler.SlaveId = 1
-		if err := handler.Connect(); err != nil {
-			logger.Logger.Error("创建连接失败", zap.Error(err))
-		}
-		modbusClient := modbus.NewClient(handler)
-		modbusClients = append(modbusClients, modbusClient)
-	}
-
-	// 读取参数
-	address := uint16(0)    // 寄存器起始地址
-	quantity := uint16(125) // 读取数量
-	// totalReads := 100_000_000 // 1亿次读取
-	totalReads := 1_000_000 // 总读取次数
-	errorCount := 0         // 错误计数
-
-	// 准备结果收集
-	resChanCount := 1000
-	resChan := make(chan map[time.Time][]int16, resChanCount) // 缓冲区防止阻塞
-	results := make([]map[time.Time][]int16, 0, totalReads)
-	done := make(chan struct{})
-
-	// 启动结果收集器
-	go func(writeAPI api.WriteAPI) {
-		defer close(done)
-		num := 0
-		for res := range resChan {
-			results = append(results, res)
-			for key, value := range res {
-				// 创建point
-				p := influxdb2.NewPointWithMeasurement("experiment").AddTag("location", "tianjin")
-				for count, v := range value {
-					p.AddField(fmt.Sprintf("sensor%d", count), v)
-				}
-				// todo:后面要把观察点删除，把入库放到worker里
-				num++
-				p.AddField("num", num)
-				// 写入数据到InfluxDB
-				p.SetTime(time.Unix(0, key.UnixNano()))
-				// logger.Logger.Info("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", num), zap.Any("值：", value))
-				writeAPI.WritePoint(p)
-			}
-		}
-		// 确保所有数据都已写入
-		writeAPI.Flush()
-		// 错误处理
-		errorsCh := writeAPI.Errors()
-		go func() {
-			for err := range errorsCh {
-				logger.Logger.Error("写入错误:", zap.Error(err))
-			}
-		}()
-	}(writeAPI)
-
-	// 创建工作队列 todo:不做计数 直接for true 循环
-	jobs := make(chan struct{}, totalReads)
-	for range totalReads {
-		jobs <- struct{}{}
-	}
-	close(jobs)
-
-	// 记录开始时间
-	startTime := time.Now()
-
-	// 启动worker
-	var wg sync.WaitGroup
-	for _, modbusClient := range modbusClients {
-		wg.Add(1)
-		go worker(modbusClient, address, quantity, jobs, resChan, &wg, &errorCount)
-	}
-
-	// 等待所有worker完成
-	wg.Wait()
-	close(resChan)
-
-	// 等待结果收集完成
-	<-done
-
-	// 计算耗时
-	duration := time.Since(startTime)
-
-	logger.Logger.Info("性能统计",
-		zap.Int("完成读取次数", len(results)),
-		zap.Float64("总耗时(秒)", math.Round(duration.Seconds()*100/100)),
-		zap.Float64("总耗时(分)", math.Round(duration.Minutes()*100/100)),
-		zap.Float64("平均每次耗时(微秒)", math.Round(float64(duration.Microseconds())/float64(totalReads)*100/100)),
-		zap.Float64("QPS(次/秒)", math.Round(float64(totalReads)/duration.Seconds()*100/100)),
-		zap.Int("错误次数", errorCount),
-	)
 }
