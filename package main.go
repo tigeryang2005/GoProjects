@@ -48,7 +48,7 @@ func main() {
 	//连接influxdb
 	// 1. 创建InfluxDB客户端
 	url := "http://localhost:8086"
-	token := "Ab5E0h9ReK8RhJ_YsdgQc3RDT2oldnJT-HgNmta3QAGkckeS_NXkAPymJ-sGBosxQ4MkEJn3eL0ckfzzsUB8eQ=="
+	token := "Q52Nrc8xXl1gWdYfHYmUkmdxLft0FnXR7gxuUKxMjC8YBo6ra8m1G1ff3EFufC42lMea6qI4eDmqovlEc7-XUA=="
 	org := "my-org"
 	bucket := "my-bucket"
 	influxdb2Client := influxdb2.NewClient(url, token)
@@ -56,7 +56,7 @@ func main() {
 	// 获取异步写入API
 	writeAPI := influxdb2Client.WriteAPI(org, bucket)
 
-	modbusClientSize := 10 // 客户端handler数量与worker数量一致
+	modbusClientSize := 2 // 客户端handler数量与worker数量一致
 	modbusClients := make([]modbus.Client, 0, modbusClientSize)
 	for range modbusClientSize {
 		// Modbus TCP 连接参数
@@ -95,11 +95,12 @@ func main() {
 				for count, v := range value {
 					p.AddField(fmt.Sprintf("sensor%d", count), v)
 				}
+				// todo:后面要把观察点删除，把入库放到worker里
 				num++
 				p.AddField("num", num)
 				// 写入数据到InfluxDB
 				p.SetTime(time.Unix(0, key.UnixNano()))
-				logger.Logger.Info("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", num), zap.Any("值：", value))
+				// logger.Logger.Info("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", num), zap.Any("值：", value))
 				writeAPI.WritePoint(p)
 			}
 		}
