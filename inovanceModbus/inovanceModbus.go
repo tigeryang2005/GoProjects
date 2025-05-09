@@ -53,7 +53,6 @@ func ConnectInovanceModbus() {
 	// 准备结果收集
 	resChanCount := 1000
 	resChan := make(chan map[time.Time][]int16, resChanCount) // 缓冲区防止阻塞
-	// results := make([]map[time.Time][]int16, 0, totalReads)
 	done := make(chan struct{})
 
 	// 记录开始时间
@@ -141,12 +140,12 @@ func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan st
 	}
 }
 
-// 使用 time.Ticker 实现周期性任务生成
+// 使用 time.Ticker 实现周期性任务和定长任务生成
 func continuousJobGenerator(interval time.Duration, jobs chan<- struct{}, totalJobs int64) {
 
-	// 定长任务
+	// 如果 totalJobs 为 0，表示无限读取
+	// 否则，表示定长读取
 	if totalJobs == int64(0) {
-		// 无限循环
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
