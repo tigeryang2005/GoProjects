@@ -56,7 +56,7 @@ func main() {
 	// 获取异步写入API
 	writeAPI := influxdb2Client.WriteAPI(org, bucket)
 
-	modbusClientSize := 2 // 客户端handler数量与worker数量一致
+	modbusClientSize := 1 // 客户端handler数量与worker数量一致
 	modbusClients := make([]modbus.Client, 0, modbusClientSize)
 	for range modbusClientSize {
 		// Modbus TCP 连接参数
@@ -115,7 +115,7 @@ func main() {
 		}()
 	}(writeAPI)
 
-	// 创建工作队列
+	// 创建工作队列 todo:不做计数 直接for true 循环
 	jobs := make(chan struct{}, totalReads)
 	for range totalReads {
 		jobs <- struct{}{}
