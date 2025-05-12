@@ -102,7 +102,7 @@ func ConnectInovanceModbus() {
 	}(writeAPI)
 
 	jobs := make(chan struct{}, 1000)
-	interval := 1000 * time.Microsecond // 读取间隔1ms
+	interval := 100 * time.Microsecond // 读取间隔100微秒
 	// 启动周期性任务生成器
 	go continuousJobGenerator(interval, jobs, totaljobs)
 
@@ -138,10 +138,8 @@ func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan st
 		pTags := map[string]string{"location": "tianjin"}
 		pFields := make(map[string]interface{})
 		pFields["num"] = *currentJobs
-		// p := influxdb2.NewPointWithMeasurement("experiment").AddTag("location", "tianjin")
 		for i := range int16Results {
 			rawValue := binary.BigEndian.Uint16(results[i*2:])
-			// p.AddField(fmt.Sprintf("sensor%d", i), int16(rawValue))
 			pFields[fmt.Sprintf("sensor%d", i)] = int16(rawValue)
 		}
 		p := influxdb2.NewPoint(
@@ -150,9 +148,6 @@ func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan st
 			pFields,
 			readRegistersTs,
 		)
-		// p.AddField("num", *currentJobs)
-		// p.SetTime(time.Unix(0, readRegistersTs.UnixNano()))
-		// p.SetTime(readRegistersTs.UnixNano())
 		atomic.AddInt64(currentJobs, 1)
 		// 写入数据库
 		writeAPI.WritePoint(p)
@@ -168,12 +163,12 @@ func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan st
 			}
 		}()
 
-		readFinishTs := time.Now().UnixNano()
+		// readFinishTs := time.Now().UnixNano()
 		// 计算读取时间
-		duration := readFinishTs - readRegistersTs.UnixNano()
+		// duration := readFinishTs - readRegistersTs.UnixNano()
 		// 记录读取到的数据
-		logger.Logger.Debug("读取到数据", zap.Any("读取数量:", currentJobs), zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("读取时间(纳秒)", duration), zap.Any("数据", p.FieldList()))
-		// resChan <- resultsMap
+		// logger.Logger.Debug("读取到数据", zap.Any("读取数量:", currentJobs), zap.Int64("时间戳", readRegistersTs.UnixNano()), zap.Any("读取时间(纳秒)", duration), zap.Any("数据", p.FieldList()))
+
 	}
 }
 
@@ -193,13 +188,14 @@ func continuousJobGenerator(interval time.Duration, jobs chan<- struct{}, totalJ
 		}
 	} else {
 		// jobs <- struct{}{}
+		// todo:上线要把下面删除 把上面的注释还原
 		ticker := time.NewTicker(interval)
 		i := 0
 		defer ticker.Stop()
 		for range ticker.C {
 			jobs <- struct{}{}
 			i++
-			// logger.Logger.Debug("生成任务", zap.Any("时间戳", time.Now().UnixNano()), zap.Any("任务队列", len(jobs)), zap.Any("任务数量", i))
+			logger.Logger.Debug("生成任务", zap.Any("时间戳", time.Now().UnixNano()), zap.Any("任务队列", len(jobs)), zap.Any("任务数量", i))
 			if int64(i) >= totalJobs {
 				break
 			}
