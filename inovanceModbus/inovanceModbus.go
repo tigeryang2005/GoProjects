@@ -2,6 +2,7 @@ package inovanceModbus
 
 import (
 	"connectPlcModbus/logger"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -26,7 +27,12 @@ func ConnectInovanceModbus() {
 	defer influxdb2Client.Close()
 	// 获取异步写入API
 	writeAPI := influxdb2Client.WriteAPI(org, bucket)
-
+	// 检查数据库连接健康
+	health, err := influxdb2Client.Health(context.Background())
+	if err != nil {
+		logger.Logger.Error("健康检查失败:", zap.Error(err))
+	}
+	logger.Logger.Info("InfluxDB 健康状态", zap.Any("status:", health.Status))
 	modbusClientSize := 1 // 客户端handler数量与worker数量一致
 	modbusClients := make([]modbus.Client, 0, modbusClientSize)
 	for range modbusClientSize {
@@ -120,12 +126,12 @@ func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan st
 	defer wg.Done()
 	for range jobs {
 		results, err := modbusClient.ReadHoldingRegisters(address, quantity)
+		readRegistersTs := time.Now()
 		if err != nil {
 			logger.Logger.Error("读取寄存器失败", zap.Error(err))
 			atomic.AddInt32(errorCount, 1)
 			continue
 		}
-		readRegistersTs := time.Now()
 		// Convert byte slice to int16 slice
 		int16Results := make([]int16, len(results)/2)
 		for i := range int16Results {
