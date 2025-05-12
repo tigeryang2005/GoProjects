@@ -52,9 +52,9 @@ func ConnectInovanceModbus() {
 	quantity := uint16(125) // 读取数量
 
 	// totalReads := 100_000_000 // 1亿次读取
-	totaljobs := int64(100_000) // 总读取次数 0表示无限读取
-	currentJobs := int64(0)     // 已读取次数计数
-	errorCount := int32(0)      // 错误计数
+	totaljobs := int64(0)   // 总读取次数 0表示无限读取
+	currentJobs := int64(0) // 已读取次数计数
+	errorCount := int32(0)  // 错误计数
 
 	// 准备结果收集
 	resChanCount := 1000
@@ -80,7 +80,7 @@ func ConnectInovanceModbus() {
 				p.AddField("num", *currentJobs)
 				// 写入数据到InfluxDB
 				p.SetTime(time.Unix(0, key.UnixNano()))
-				// logger.Logger.Info("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", *currentJobs), zap.Any("值：", value))
+				logger.Logger.Debug("写入数据", zap.Int64("时间戳", key.UnixNano()), zap.Any("num:", *currentJobs), zap.Any("值：", value))
 				writeAPI.WritePoint(p)
 				// 输出统计信息
 				// logger.Logger.Debug("写入完成", zap.Int64("总读取次数", *currentJobs))
@@ -102,7 +102,7 @@ func ConnectInovanceModbus() {
 	}(writeAPI, startTime, &currentJobs)
 
 	jobs := make(chan struct{}, 1000)
-	interval := 1 * time.Microsecond // 读取间隔1微秒
+	interval := 100 * time.Microsecond // 读取间隔1微秒
 	// 启动周期性任务生成器
 	go continuousJobGenerator(interval, jobs, totaljobs)
 
@@ -155,6 +155,9 @@ func continuousJobGenerator(interval time.Duration, jobs chan<- struct{}, totalJ
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
+			if len(jobs) >= 1000 {
+				continue
+			}
 			jobs <- struct{}{}
 		}
 	} else {
