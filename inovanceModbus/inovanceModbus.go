@@ -125,8 +125,8 @@ func ConnectInovanceModbus() {
 func worker(modbusClient modbus.Client, address, quantity uint16, jobs <-chan struct{}, resChan chan map[time.Time][]int16, wg *sync.WaitGroup, errorCount *int32) {
 	defer wg.Done()
 	for range jobs {
-		results, err := modbusClient.ReadHoldingRegisters(address, quantity)
 		readRegistersTs := time.Now()
+		results, err := modbusClient.ReadHoldingRegisters(address, quantity)
 		if err != nil {
 			logger.Logger.Error("读取寄存器失败", zap.Error(err))
 			atomic.AddInt32(errorCount, 1)
